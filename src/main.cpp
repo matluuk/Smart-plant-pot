@@ -36,14 +36,14 @@ SD-card circuit:
 
 #include "customLcdChars.h"
 
-#define DHT_SENSOR_TYPE DHT_TYPE_11
+//#define DHT_SENSOR_TYPE DHT_TYPE_11
 //#define DHTTYPE DHT22
 //#define DHTPIN 6
 
 //Global constants
 const char filename[] = "datalog.txt";
 const int SOIL_MOISTURE_CALIBRATION_AIR = 530; // old 615
-const int SOIL_MOISTURE_CALIBRATION_WATER = 222;
+const int SOIL_MOISTURE_CALIBRATION_WATER = 213;
 const int musicDry[] = {440, 550, 330};
 const int musicLength = 3;
 
@@ -74,6 +74,7 @@ byte temperatureMeasureState = 0;
 byte lightMeasureState = 0;
 byte sensorDataReady = 0;
 byte buzzerState = 0;
+bool sdCardState = false;
 bool callLcdUpdate = false;
 enum lcdState {         //TODO: change to only containing one state for every menu item. Add another state if changing value
   FACE,
@@ -94,7 +95,7 @@ enum buttonState {
   PRESSED,
   NOT_PRESSED
 };
-enum lcdState lcdState = DATA;
+enum lcdState lcdState = FACE;
 enum buttonState buttonState = NOT_PRESSED;
 enum faceState faceState = HAPPY;
 enum faceState oldFaceState = faceState;
@@ -111,7 +112,7 @@ int soilMoistureReadingAverage = 0;
 int soilMoistureCalibrated = 0;
 int soilMoisturePercentage = 0;
 int soilMoistureTresholdWet = 50;
-int soilMoistureTresholdDry = 20;
+int soilMoistureTresholdDry = 30;
 
 int temperatureReadingCount = 0;
 int temperatureReading = 0;
@@ -373,7 +374,7 @@ void measureTemperature(){
 
   }
 }
-//TODO: is this good way?
+
 void readSensors(){
   measureSoilMoisture();
   measureLight();
@@ -387,27 +388,15 @@ void readSensors(){
     temperatureMeasureTime = millis();
     lightMeasureTime = millis();
     Serial.println("sensorDataReady!");
-
-    //TODO: remove this
-    // sprintf(temperatureChar, "23.4");
-    // soilMoisturePercentage = 30;
-    // lightReadingAverage = 20;
   }
 }
 
-/*
-void readHumidity(){
-  //Humidity
-  int humidity = analogRead(MOISTURE_PIN);
-  percentageHumidity = map(humidity, SOIL_MOISTURE_CALIBRATION_WATER, SOIL_MOISTURE_CALIBRATION_AIR, 100, 0); //calculate humidity percentage
-}
-*/
-
-
 void sendDataToSD(){
+  if (sdCardState){
   //Moisture_raw, moisture percent, temperature, light
   sprintf(strBuf, "%d, %d, %s, %d, %lu", soilMoistureReadingAverage, soilMoisturePercentage, temperatureChar, lightReading, (millis() / 60000));
   writeToFile(strBuf);
+  }
 }
 
 void printToSerial(){
@@ -477,7 +466,7 @@ void updateLcd(){
     case DATA:
       lcd.clear(); 
       
-      sprintf(lcdTop, "%3d%% Light %d", soilMoisturePercentage, lightReadingAverage);
+      sprintf(lcdTop, "%3d%% RAW: %d", soilMoisturePercentage, soilMoistureReading);
       lcd.setCursor(0,0);
       lcd.write(byte(0)); 
       lcd.setCursor(2,0);
@@ -486,20 +475,19 @@ void updateLcd(){
       lcd.setCursor(0,1);
       lcd.write(byte(1));
       lcd.setCursor(2,1);
-      sprintf(lcdBottom, "%s%cC", temperatureChar, (char)223);
+      sprintf(lcdBottom, "%s%cC : %d", temperatureChar, (char)223, lightReadingAverage);
       lcd.print(lcdBottom);
       break;
 
     case FACE:
       lcd.clear();
 
-      sprintf(lcdTop, "%3d%% %d", soilMoisturePercentage, soilMoistureReading);
+      sprintf(lcdTop, "%3d%%", soilMoisturePercentage);
       lcd.setCursor(0,0);
       lcd.write(byte(0)); 
       lcd.setCursor(2,0);
       lcd.print(lcdTop);
       Serial.println(lcdTop);
-      Serial.println(soilMoistureReading);
 
       lcd.setCursor(0,1);
       lcd.write(byte(1));
@@ -596,6 +584,17 @@ void buzzer() {
   }
 }
 
+void intializeSdCard(){
+  Serial.println("Initializing SD card...");
+  // see if the card is present and can be initialized:
+  if (!SD.begin(SDCS)) {
+    Serial.println("Card failed, or not present");
+    sdCardState = false;
+  }
+  sdCardState = true;
+  Serial.println("card initialized.");
+}
+
 void setup() {
   attachInterrupt(digitalPinToInterrupt(BUTTON1_PIN), button1Fxn, RISING);
   attachInterrupt(digitalPinToInterrupt(BUTTON2_PIN), button2Fxn, RISING);
@@ -613,16 +612,7 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
-  Serial.println("Initializing SD card...");
-
-  // see if the card is present and can be initialized:
-  if (!SD.begin(SDCS)) {
-    Serial.println("Card failed, or not present");
-    //TODO: change this
-    // don't do anything more: 
-    while (1);
-  }
-  Serial.println("card initialized.");
+  intializeSdCard();
 
   // writeToFile("Moisture_raw, moisture percent, temperature, light, timeFromStart");
   
@@ -644,20 +634,22 @@ void setup() {
 }
 
 void writeToSD(char dataString[]){
-  // open the file. note that only one file can be open at a time,
-  // so you have to close this one before opening another.
-  File dataFile = SD.open(filename, FILE_WRITE);
+  if (sdCardState){
+    // open the file. note that only one file can be open at a time,
+    // so you have to close this one before opening another.
+    File dataFile = SD.open(filename, FILE_WRITE);
 
-  // if the file is available, write to it:
-  if (dataFile) {
-    dataFile.println(dataString);
-    dataFile.close();
-    // print to the serial port too:
-    Serial.println(dataString);
-  }
-  // if the file isn't open, pop up an error:
-  else {
-    Serial.println("error opening datalog.txt");
+    // if the file is available, write to it:
+    if (dataFile) {
+      dataFile.println(dataString);
+      dataFile.close();
+      // print to the serial port too:
+      Serial.println(dataString);
+    }
+    // if the file isn't open, pop up an error:
+    else {
+      Serial.println("error opening datalog.txt");
+    }
   }
 }
 
@@ -666,7 +658,7 @@ void loop() {
   // buzzer();
   //TODO: one send data funktion for serial and sd?
   if (sensorDataReady == 1){
-    sendDataToSD();
+    //sendDataToSD();
     printToSerial();
   }
   updateLcd();
@@ -674,5 +666,21 @@ void loop() {
 
 // make a string for assembling the data to log:
   char dataString[] = "12345";
-  writeToSD(dataString);
+  if (sdCardState){
+    // open the file. note that only one file can be open at a time,
+    // so you have to close this one before opening another.
+    File dataFile = SD.open("datalog.txt", FILE_WRITE);
+
+    // if the file is available, write to it:
+    if (dataFile) {
+      dataFile.println(dataString);
+      dataFile.close();
+      // print to the serial port too:
+      Serial.println(dataString);
+    }
+    // if the file isn't open, pop up an error:
+    else {
+      Serial.println("error opening datalog.txt");
+    }
+  }
 }
