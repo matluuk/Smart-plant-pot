@@ -18,6 +18,14 @@ Lcd circuit:
  * LCD VSS pin to GND
 */
 
+/*
+SD-card circuit:
+ ** MOSI - pin 11
+ ** MISO - pin 12
+ ** CLK - pin 13
+ ** CS - pin 4 (for MKRZero SD: SDCARD_SS_PIN)
+*/
+
 #include <arduino.h>
 #include <LiquidCrystal.h>
 #include <SPI.h>
@@ -28,14 +36,14 @@ Lcd circuit:
 
 #include "customLcdChars.h"
 
-#define DHT_SENSOR_TYPE DHT_TYPE_11
+//#define DHT_SENSOR_TYPE DHT_TYPE_11
 //#define DHTTYPE DHT22
 //#define DHTPIN 6
 
 //Global constants
 const char filename[] = "datalog.txt";
-const int SOIL_MOISTURE_CALIBRATION_AIR = 614;
-const int SOIL_MOISTURE_CALIBRATION_WATER = 222;
+const int SOIL_MOISTURE_CALIBRATION_AIR = 530; // old 615
+const int SOIL_MOISTURE_CALIBRATION_WATER = 213;
 const int musicDry[] = {440, 550, 330};
 const int musicLength = 3;
 
@@ -66,6 +74,7 @@ byte temperatureMeasureState = 0;
 byte lightMeasureState = 0;
 byte sensorDataReady = 0;
 byte buzzerState = 0;
+bool sdCardState = false;
 bool callLcdUpdate = false;
 enum lcdState {         //TODO: change to only containing one state for every menu item. Add another state if changing value
   FACE,
@@ -86,24 +95,24 @@ enum buttonState {
   PRESSED,
   NOT_PRESSED
 };
-enum lcdState lcdState = DATA;
+enum lcdState lcdState = FACE;
 enum buttonState buttonState = NOT_PRESSED;
 enum faceState faceState = HAPPY;
 enum faceState oldFaceState = faceState;
 
 //Other global variables
-const int sensorMeasureDelay = 10000;      //delay between readings 15min 900000
+const int sensorMeasureDelay = 2000;      //delay between readings 15min 900000
 const int sesnorMeasureWaitingTime = 200;   //delay between readings when calculating average
 const int buzzerWaitingTime = 1000;         //time between notes
 const int buzzerWaitingDelay = 3000;        //time between soundtrack
 
 int soilMoistureReadingCount = 0;
 int soilMoistureReading = 0;
-int soilMoistureAverage = 0;
+int soilMoistureReadingAverage = 0;
 int soilMoistureCalibrated = 0;
 int soilMoisturePercentage = 0;
 int soilMoistureTresholdWet = 50;
-int soilMoistureTresholdDry = 20;
+int soilMoistureTresholdDry = 30;
 
 int temperatureReadingCount = 0;
 int temperatureReading = 0;
@@ -214,11 +223,12 @@ void button2Fxn(){
   callLcdUpdate = true;
 }
 
-bool writeToFile(char str[]){
-  File dataFile = SD.open(filename, FILE_WRITE);
+bool writeToFile(String dataString){
+  File dataFile = SD.open("datalog.txt", FILE_WRITE);
   if (dataFile) {
-    dataFile.println(str);
+    dataFile.println(dataString);
     dataFile.close();
+    Serial.println("Data sent to SD-card!");
     return true;
   } else {
     sprintf(strBuf, "error opening %s", filename);
@@ -233,23 +243,24 @@ void measureSoilMoisture(){
   {
   case 0:
     soilMoistureReadingCount = 0;
-    soilMoistureAverage = 0;
+    soilMoistureReadingAverage = 0;
     soilMoistureMeasureTime = millis();
     soilMoistureMeasureState++;
     break;
   case 1: //read data
-    if(soilMoistureReadingCount < 10 && millis() - soilMoistureMeasureTime >= sesnorMeasureWaitingTime){
+    if((soilMoistureReadingCount < 10) && (millis() - soilMoistureMeasureTime >= sesnorMeasureWaitingTime)){
       soilMoistureMeasureTime = millis();
       soilMoistureReading = analogRead(MOISTURE_PIN);
-      soilMoistureAverage += soilMoistureReading;
+      soilMoistureReadingAverage += soilMoistureReading;
       soilMoistureReadingCount++;
-    } else {
+    } 
+    if(soilMoistureReadingCount >= 10) {
       soilMoistureMeasureState++;        
     }
     break;
   case 2: //calculate soil moisture percentage
-    soilMoistureAverage = soilMoistureAverage / soilMoistureReadingCount;
-    soilMoistureCalibrated = map(soilMoistureAverage, SOIL_MOISTURE_CALIBRATION_WATER, SOIL_MOISTURE_CALIBRATION_AIR, 1320, 3173);    //calibrate new value with map function
+    soilMoistureReadingAverage = soilMoistureReadingAverage / soilMoistureReadingCount;
+    soilMoistureCalibrated = map(soilMoistureReadingAverage, SOIL_MOISTURE_CALIBRATION_WATER, SOIL_MOISTURE_CALIBRATION_AIR, 1320, 3173);    //calibrate new value with map function
     soilMoisturePercentage = (178147020.5 - 52879.727 * soilMoistureCalibrated) / (1 - 428.814 * soilMoistureCalibrated + 0.9414 * pow(soilMoistureCalibrated, 2)); //Fitting function to calculate %-value
     if (soilMoisturePercentage > 100) {
       soilMoisturePercentage = 100; 
@@ -290,12 +301,13 @@ void measureLight(){
     lightMeasureState++;
     break;
   case 1:
-    if(lightReadingCount < 10 && millis() - lightMeasureTime >= sesnorMeasureWaitingTime){
+    if((lightReadingCount < 10) && (millis() - lightMeasureTime >= sesnorMeasureWaitingTime)){
         lightMeasureTime = millis();
         lightReading = analogRead(LIGHT_PIN);
         lightReadingAverage += lightReading;
         lightReadingCount++;
-    } else {
+    }
+    if(lightReadingCount >= 10){
       lightMeasureState++;        
     }
     break;
@@ -327,12 +339,13 @@ void measureTemperature(){
     temperatureMeasureState++;
     break;
   case 1:
-    if(temperatureReadingCount < 10 && millis() - temperatureMeasureTime >= sesnorMeasureWaitingTime){
+    if((temperatureReadingCount < 10) && (millis() - temperatureMeasureTime >= sesnorMeasureWaitingTime)){
         temperatureMeasureTime = millis();
         temperatureReading = analogRead(THERMISTOR_PIN);
         temperatureReadingAverage += temperatureReading;
         temperatureReadingCount++;
-    } else {
+    } 
+    if(temperatureReadingCount >= 10){
       temperatureMeasureState++;        
     }
     break;
@@ -361,7 +374,7 @@ void measureTemperature(){
 
   }
 }
-//TODO: is this good way?
+
 void readSensors(){
   measureSoilMoisture();
   measureLight();
@@ -375,35 +388,24 @@ void readSensors(){
     temperatureMeasureTime = millis();
     lightMeasureTime = millis();
     Serial.println("sensorDataReady!");
-    
-    //TODO: remove this
-    // sprintf(temperatureChar, "23.4");
-    // soilMoisturePercentage = 30;
-    // lightReadingAverage = 20;
   }
 }
 
-/*
-void readHumidity(){
-  //Humidity
-  int humidity = analogRead(MOISTURE_PIN);
-  percentageHumidity = map(humidity, SOIL_MOISTURE_CALIBRATION_WATER, SOIL_MOISTURE_CALIBRATION_AIR, 100, 0); //calculate humidity percentage
-}
-*/
-
-
 void sendDataToSD(){
+  if (sdCardState){
   //Moisture_raw, moisture percent, temperature, light
-  sprintf(strBuf, "%d, %d, %s, %d, %lu", soilMoistureAverage, soilMoisturePercentage, temperatureChar, lightReading, (millis() / 60000));
+  sprintf(strBuf, "%d, %d, %s, %d, %lu", soilMoistureReadingAverage, soilMoisturePercentage, temperatureChar, lightReading, (millis() / 60000));
   writeToFile(strBuf);
+  }
 }
 
 void printToSerial(){
   // if((millis() - serialUpdateTime) >= serialUpdateWaitingTime){
     //send to serial
-    sprintf(strBuf, "Moisture percentage: %d, Moisture reading: %d, Temperature: %s, Light reading: %d, faceState: %d",
+    sprintf(strBuf, "Moisture %%: %d%%, Moisture raw avg: %d, Moisture raw: %d, Temperature: %s, Light raw: %d, faceState: %d",
       soilMoisturePercentage,
-      soilMoistureReading,
+      soilMoistureReadingAverage,
+      analogRead(MOISTURE_PIN),
       temperatureChar,
       lightReadingAverage,
       faceState
@@ -464,41 +466,34 @@ void updateLcd(){
     case DATA:
       lcd.clear(); 
       
-      sprintf(lcdTop, "%3d%% Light %d", soilMoisturePercentage, lightReadingAverage);
+      sprintf(lcdTop, "%3d%% RAW: %d", soilMoisturePercentage, soilMoistureReading);
       lcd.setCursor(0,0);
       lcd.write(byte(0)); 
       lcd.setCursor(2,0);
       lcd.print(lcdTop);
       
-      //TODO: chage this to use temperatureChar
-      //sprintf(lcdBottom, "%f%cC", temperature, (char)223);
       lcd.setCursor(0,1);
       lcd.write(byte(1));
       lcd.setCursor(2,1);
-      lcd.print("      C     ");
-      lcd.setCursor(2, 1);
-      lcd.print(temperature, 1);
-      lcd.setCursor(7, 1);
-      lcd.print((char)223);
+      sprintf(lcdBottom, "%s%cC : %d", temperatureChar, (char)223, lightReadingAverage);
+      lcd.print(lcdBottom);
       break;
 
     case FACE:
       lcd.clear();
 
-      sprintf(lcdTop, "%3d%%, %d", soilMoisturePercentage, soilMoistureReading);
+      sprintf(lcdTop, "%3d%%", soilMoisturePercentage);
       lcd.setCursor(0,0);
       lcd.write(byte(0)); 
       lcd.setCursor(2,0);
       lcd.print(lcdTop);
+      Serial.println(lcdTop);
 
       lcd.setCursor(0,1);
       lcd.write(byte(1));
       lcd.setCursor(2,1);
-      lcd.print("      C     ");
-      lcd.setCursor(2, 1);
-      lcd.print(temperature, 1);
-      lcd.setCursor(7, 1);
-      lcd.print((char)223);  
+      sprintf(lcdBottom, "%s%cC", temperatureChar, (char)223);
+      lcd.print(lcdBottom);
 
       //Print the face 
       selectFace();
@@ -559,6 +554,7 @@ void updateLcd(){
       break;
     }
     // lcdUpdateTime = millis();
+    Serial.println("Lcd updated!");
     callLcdUpdate = false;
   }
 }
@@ -588,6 +584,17 @@ void buzzer() {
   }
 }
 
+void intializeSdCard(){
+  Serial.println("Initializing SD card...");
+  // see if the card is present and can be initialized:
+  if (!SD.begin(SDCS)) {
+    Serial.println("Card failed, or not present");
+    sdCardState = false;
+  }
+  sdCardState = true;
+  Serial.println("card initialized.");
+}
+
 void setup() {
   attachInterrupt(digitalPinToInterrupt(BUTTON1_PIN), button1Fxn, RISING);
   attachInterrupt(digitalPinToInterrupt(BUTTON2_PIN), button2Fxn, RISING);
@@ -605,18 +612,9 @@ void setup() {
     ; // wait for serial port to connect. Needed for native USB port only
   }
 
-  Serial.print("Initializing SD card...");
+  intializeSdCard();
 
-  // see if the card is present and can be initialized:
-  if (!SD.begin(SDCS)) {
-    Serial.println("Card failed, or not present");
-    //TODO: change this
-    // don't do anything more: 
-    while (1);
-  }
-  Serial.println("card initialized.");
-
-  writeToFile("Moisture_raw, moisture percent, temperature, light, timeFromStart");
+  // writeToFile("Moisture_raw, moisture percent, temperature, light, timeFromStart");
   
   lcd.begin(16, 2); //set up the LCD's number of columns and rows
   
@@ -635,14 +633,54 @@ void setup() {
   //  soilMoistureMeasureState = 1;
 }
 
+void writeToSD(char dataString[]){
+  if (sdCardState){
+    // open the file. note that only one file can be open at a time,
+    // so you have to close this one before opening another.
+    File dataFile = SD.open(filename, FILE_WRITE);
+
+    // if the file is available, write to it:
+    if (dataFile) {
+      dataFile.println(dataString);
+      dataFile.close();
+      // print to the serial port too:
+      Serial.println(dataString);
+    }
+    // if the file isn't open, pop up an error:
+    else {
+      Serial.println("error opening datalog.txt");
+    }
+  }
+}
+
 void loop() {
   readSensors();
   // buzzer();
   //TODO: one send data funktion for serial and sd?
   if (sensorDataReady == 1){
-    sendDataToSD();
+    //sendDataToSD();
     printToSerial();
   }
   updateLcd();
   sensorDataReady = 0;
+
+// make a string for assembling the data to log:
+  char dataString[] = "12345";
+  if (sdCardState){
+    // open the file. note that only one file can be open at a time,
+    // so you have to close this one before opening another.
+    File dataFile = SD.open("datalog.txt", FILE_WRITE);
+
+    // if the file is available, write to it:
+    if (dataFile) {
+      dataFile.println(dataString);
+      dataFile.close();
+      // print to the serial port too:
+      Serial.println(dataString);
+    }
+    // if the file isn't open, pop up an error:
+    else {
+      Serial.println("error opening datalog.txt");
+    }
+  }
 }
