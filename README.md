@@ -14,4 +14,4 @@ Currently I am powering electronics through arduino usb port.
 
 All plastic parts are 3d-printed
 
-![asdasdd](images\SAM_4160.JPG)
+![asdasdd](https://github.com/matluuk/Smart-plant-pot/blob/main/images/SAM_4160.JPG)
