@@ -11,3 +11,7 @@ Electronics are done with arduino uno.
 Smart pot uses 1602 lcd display, two buttons and passive buzzer for interaction with user. 
 At start I was planing to power electronics using 9v battery, but I it isn't really a good option. 
 Currently I am powering electronics through arduino usb port.
+
+All plastic parts are 3d-printed
+
+![asdasdd](images\SAM_4160.JPG)
